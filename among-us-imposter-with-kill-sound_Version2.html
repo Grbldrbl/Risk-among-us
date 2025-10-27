@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Among Us — Floating Joystick + Kill Sound (smaller kill button)</title>
+<style>
+  :root{
+    --bg:#07111a;
+    --accent:#ff5252;
+    --dummy:#4fb3ff;
+    --panel:#0f1722cc;
+    --muted:#9aa7bf;
+    --control-bg: rgba(255,255,255,0.04);
+
+    /* Kill button sizing (adjust these to change size) */
+    --kill-size: 64px;        /* was 92px */
+    --kill-font-size: 18px;   /* was 20px */
+    --kill-shadow: 0 10px 24px rgba(255,80,80,0.10);
+  }
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;-webkit-tap-highlight-color:transparent}
+  body{background:linear-gradient(180deg,var(--bg),#04121a);color:#e6eef8;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px}
+  .card{width:100%;max-width:1100px;background:linear-gradient(180deg,#07121a,#061018);border-radius:10px;padding:10px;border:1px solid rgba(255,255,255,0.03);box-shadow:0 10px 40px rgba(0,0,0,0.6)}
+  header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+  h1{font-size:16px;margin:0}
+  .muted{color:var(--muted);font-size:13px}
+  canvas{width:100%;height:60vh;border-radius:8px;background:linear-gradient(180deg,#081a24,#041018);touch-action:none;display:block}
+  .hud{display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .panel{background:var(--panel);padding:8px;border-radius:8px;min-width:140px}
+  .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .big{font-weight:700;font-size:18px}
+  .right-controls{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;align-items:center;z-index:60;pointer-events:auto}
+  .kill-btn{
+    width:var(--kill-size);
+    height:var(--kill-size);
+    border-radius:999px;
+    background:var(--accent);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:#071218;
+    font-weight:800;
+    font-size:var(--kill-font-size);
+    box-shadow: var(--kill-shadow);
+    border:0;
+    touch-action:manipulation;
+  }
+  .small-btn{width:56px;height:56px;border-radius:12px;background:var(--control-bg);display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.03)}
+  .touch-hint{font-size:12px;color:var(--muted);text-align:center}
+  /* Floating joystick elements (hidden by default) */
+  .fj-base, .fj-knob{
+    position:fixed; z-index:65; pointer-events:none; touch-action:none;
+  }
+  .fj-base{
+    width:130px; height:130px; border-radius:999px;
+    background:var(--control-bg); display:flex; align-items:center; justify-content:center;
+    box-shadow: inset 0 8px 20px rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.03);
+    transform: translate(-50%,-50%); /* center on position */
+    opacity: 0.95;
+  }
+  .fj-knob{
+    width:56px; height:56px; border-radius:999px;
+    background:linear-gradient(180deg,#0f2a33,#062029); display:flex; align-items:center; justify-content:center;
+    border:2px solid rgba(255,255,255,0.04);
+    transform: translate(-50%,-50%);
+  }
+
+  /* keep right controls visible on desktop as well */
+  @media (min-width:900px){
+    .right-controls{display:flex}
+  }
+</style>
+</head>
+<body>
+  <div class="card" role="application" aria-label="Imposter prototype (floating joystick)">
+    <header>
+      <h1>Among Us — Floating Joystick + Kill Sound</h1>
+      <div class="muted">Tap left half to place joystick • Drag to move • Tap right half to aim • Kill button on bottom-right</div>
+    </header>
+
+    <canvas id="game" aria-label="Game canvas"></canvas>
+
+    <div class="hud">
+      <div class="panel">
+        <div class="label">Kill Cooldown</div>
+        <div style="height:10px;background:rgba(255,255,255,0.06);border-radius:999px;overflow:hidden">
+          <div id="coolbar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#ff8a8a)"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;align-items:center">
+          <div id="cooltext" class="big">Ready</div>
+          <div class="muted" id="rangeText">Range: 72</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="label">Alive Dummies</div>
+        <div id="alive" class="big">0</div>
+      </div>
+
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button id="restart">Restart</button>
+        <button id="settings" class="secondary">Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right-side kill button (fixed) -->
+  <div class="right-controls" id="rightControls" aria-hidden="false">
+    <button id="killBtn" class="kill-btn" aria-label="Kill">K</button>
+    <div style="display:flex;gap:8px;">
+      <button id="btnVent" class="small-btn">Vent</button>
+      <button id="btnDash" class="small-btn">Dash</button>
+    </div>
+    <div class="touch-hint muted">Aim: tap or drag right half</div>
+  </div>
+
+  <!-- Floating joystick DOM elements -->
+  <div id="fjBase" class="fj-base" style="display:none;">
+    <div id="fjKnob" class="fj-knob"></div>
+  </div>
+
+<script>
+/* Floating joystick + kill sound integrated (kill button made smaller).
+   playKillSound() is defined below and called on successful kill.
+*/
+
+/* -------------------- Kill sound (WebAudio) -------------------- */
+let _killAudioCtx = null;
+function _ensureAudioCtx() {
+  if (!_killAudioCtx) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return null;
+    _killAudioCtx = new AudioContext();
+  }
+  return _killAudioCtx;
+}
+
+function playKillSound(opts = {}) {
+  const ctx = _ensureAudioCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = (typeof opts.volume === 'number') ? opts.volume : 0.9;
+  masterGain.connect(ctx.destination);
+
+  // Percussive click
+  const clickOsc = ctx.createOscillator();
+  const clickGain = ctx.createGain();
+  clickOsc.type = 'triangle';
+  clickOsc.frequency.setValueAtTime(1200, now);
+  clickGain.gain.setValueAtTime(0.0001, now);
+  clickGain.gain.exponentialRampToValueAtTime(0.6, now + 0.003);
+  clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+  clickOsc.connect(clickGain);
+  clickGain.connect(masterGain);
+  clickOsc.start(now);
+  clickOsc.stop(now + 0.12);
+
+  // Descending stab tone
+  const stabOsc = ctx.createOscillator();
+  const stabGain = ctx.createGain();
+  stabOsc.type = 'sawtooth';
+  stabOsc.frequency.setValueAtTime(520, now + 0.01);
+  stabOsc.frequency.linearRampToValueAtTime(220, now + 0.18);
+  stabGain.gain.setValueAtTime(0.0001, now);
+  stabGain.gain.linearRampToValueAtTime(0.55, now + 0.02);
+  stabGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 120;
+
+  stabOsc.connect(hp);
+  hp.connect(stabGain);
+  stabGain.connect(masterGain);
+  stabOsc.start(now);
+  stabOsc.stop(now + 0.4);
+
+  // Short filtered noise body
+  const bufferSize = Math.floor(ctx.sampleRate * 0.06);
+  const noiseBuf = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuf;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.0001, now);
+  noiseGain.gain.linearRampToValueAtTime(0.35, now + 0.005);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 900;
+  bp.Q.value = 0.6;
+
+  noise.connect(bp);
+  bp.connect(noiseGain);
+  noiseGain.connect(masterGain);
+  noise.start(now);
+  noise.stop(now + 0.1);
+
+  // optional vibration (mobile)
+  try {
+    if (opts.vibrate !== false && navigator.vibrate) {
+      navigator.vibrate([20, 30]);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+/* -------------------- End kill sound -------------------- */
+
+/* -------------------- Game (floating joystick file base) -------------------- */
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas(){
+  const DPR = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(canvas.clientWidth * DPR);
+  canvas.height = Math.floor(canvas.clientHeight * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  canvasRect = canvas.getBoundingClientRect();
+}
+window.addEventListener('resize', () => { resizeCanvas(); updateCanvasRect(); });
+
+let canvasRect = null;
+function updateCanvasRect(){ canvasRect = canvas.getBoundingClientRect(); }
+resizeCanvas();
+updateCanvasRect();
+
+// UI refs
+const coolbar = document.getElementById('coolbar');
+const cooltext = document.getElementById('cooltext');
+const aliveEl = document.getElementById('alive');
+const rangeText = document.getElementById('rangeText');
+const restartBtn = document.getElementById('restart');
+const killBtn = document.getElementById('killBtn');
+
+// Floating joystick elements
+const fjBase = document.getElementById('fjBase');
+const fjKnob = document.getElementById('fjKnob');
+
+// Game params
+let NUM_DUMMIES = 8;
+let KILL_COOLDOWN = 4.0;
+
+// Player state
+const player = {
+  x: 0, y: 0,
+  r: 14,
+  speed: 140,
+  angle: 0,
+  killRange: 72,
+  cooldown: 0
+};
+
+// Entities
+let dummies = [];
+let bodies = [];
+let lastTime = performance.now();
+let running = true;
+let winMessage = null;
+
+// Input state
+let keys = {};
+window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; if (e.key.toLowerCase()==='k') attemptKill(); });
+window.addEventListener('keyup',   e=>{ keys[e.key.toLowerCase()] = false; });
+
+// Aim position (right half)
+let aimPos = {x: null, y: null};
+
+// Floating joystick runtime state
+let fjPointerId = null;       // active pointer id for joystick
+let fjBasePos = {x:0,y:0};    // client coordinates center of joystick base
+let fjMaxRadius = 48;        // pixels max displacement (knob range)
+let fjVec = {x:0,y:0};        // normalized movement vector (-1..1)
+let isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+// Utility conversions
+function clientToCanvas(clientX, clientY){
+  const r = canvasRect;
+  const DPR = window.devicePixelRatio || 1;
+  const x = (clientX - r.left) * (canvas.width / r.width) / DPR;
+  const y = (clientY - r.top)  * (canvas.height / r.height) / DPR;
+  return {x,y};
+}
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function rand(min,max){ return Math.random()*(max-min)+min; }
+function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
+
+// Joystick helpers (do NOT clear fjPointerId inside showFloatingJoystick)
+function showFloatingJoystick(clientX, clientY){
+  fjBasePos.x = clientX;
+  fjBasePos.y = clientY;
+  fjVec.x = 0; fjVec.y = 0;
+  fjBase.style.left = clientX + 'px';
+  fjBase.style.top  = clientY + 'px';
+  fjBase.style.display = 'block';
+  fjKnob.style.left = clientX + 'px';
+  fjKnob.style.top  = clientY + 'px';
+  fjKnob.style.transform = 'translate(-50%,-50%)';
+}
+function hideFloatingJoystick(){
+  fjBase.style.display = 'none';
+  fjPointerId = null;
+  fjVec.x = 0; fjVec.y = 0;
+  fjKnob.style.transform = 'translate(-50%,-50%)';
+}
+
+// Handle pointer events for canvas:
+canvas.addEventListener('pointerdown', function(e){
+  updateCanvasRect();
+  const clientX = e.clientX, clientY = e.clientY;
+  const half = canvasRect.left + canvasRect.width/2;
+  if (clientX < half) {
+    if (fjPointerId === null) {
+      fjPointerId = e.pointerId;
+      const baseX = clamp(clientX, 60, window.innerWidth - 60);
+      const baseY = clamp(clientY, 60, window.innerHeight - 60);
+      showFloatingJoystick(baseX, baseY);
+      try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+      handleFJMove(e.clientX, e.clientY);
+    }
+  } else {
+    const p = clientToCanvas(clientX, clientY);
+    aimPos.x = p.x; aimPos.y = p.y;
+  }
+});
+window.addEventListener('pointermove', function(e){
+  if (fjPointerId !== null && e.pointerId === fjPointerId) {
+    handleFJMove(e.clientX, e.clientY);
+  } else {
+    if (e.pointerType === 'mouse') {
+      if (!canvasRect) updateCanvasRect();
+      if (e.clientX >= canvasRect.left && e.clientX <= canvasRect.right &&
+          e.clientY >= canvasRect.top  && e.clientY <= canvasRect.bottom) {
+        const p = clientToCanvas(e.clientX, e.clientY);
+        aimPos.x = p.x; aimPos.y = p.y;
+      }
+    }
+  }
+});
+window.addEventListener('pointerup', function(e){
+  if (fjPointerId !== null && e.pointerId === fjPointerId) {
+    try { e.target.releasePointerCapture(e.pointerId); } catch(err){}
+    hideFloatingJoystick();
+  }
+});
+window.addEventListener('pointercancel', function(e){
+  if (fjPointerId !== null && e.pointerId === fjPointerId){
+    hideFloatingJoystick();
+  }
+});
+
+function handleFJMove(clientX, clientY){
+  const dx = clientX - fjBasePos.x;
+  const dy = clientY - fjBasePos.y;
+  const d = Math.hypot(dx,dy) || 1;
+  const max = fjMaxRadius;
+  const clampedDist = Math.min(d, max);
+  const nx = dx / d;
+  const ny = dy / d;
+  fjVec.x = (clampedDist / max) * nx;
+  fjVec.y = (clampedDist / max) * ny;
+  fjKnob.style.left = (fjBasePos.x + nx * clampedDist) + 'px';
+  fjKnob.style.top  = (fjBasePos.y + ny * clampedDist) + 'px';
+}
+
+// Kill button handler
+killBtn.addEventListener('click', attemptKill);
+
+// Game init & spawn logic
+function spawnDummy(x,y){
+  return {
+    x, y,
+    r: 12,
+    speed: rand(28,72),
+    target: {x,y},
+    changeTimer: rand(0.6,3.2),
+    alive: true,
+    color: getComputedStyle(document.documentElement).getPropertyValue('--dummy') || '#4fb3ff'
+  };
+}
+function pickTarget(d){
+  d.target.x = clamp(rand(30, canvas.clientWidth - 30), 30, canvas.clientWidth - 30);
+  d.target.y = clamp(rand(30, canvas.clientHeight - 30), 30, canvas.clientHeight - 30);
+  d.changeTimer = rand(0.8, 3.0);
+}
+
+function init(){
+  resizeCanvas();
+  updateCanvasRect();
+  dummies = [];
+  bodies = [];
+  player.x = canvas.clientWidth / 2;
+  player.y = canvas.clientHeight / 2;
+  player.cooldown = 0;
+  running = true;
+  winMessage = null;
+  for (let i=0;i<NUM_DUMMIES;i++){
+    let x = rand(40, canvas.clientWidth - 40);
+    let y = rand(40, canvas.clientHeight - 40);
+    if (Math.abs(x - player.x) < 90 && Math.abs(y - player.y) < 90) { x = clamp(x+120, 40, canvas.clientWidth-40); y = clamp(y+80, 40, canvas.clientHeight-40); }
+    const d = spawnDummy(x,y);
+    pickTarget(d);
+    dummies.push(d);
+  }
+  updateHUD();
+}
+
+function updateHUD(){
+  aliveEl.textContent = dummies.filter(d=>d.alive).length;
+  rangeText.textContent = 'Range: ' + Math.round(player.killRange);
+}
+
+// Kill logic (plays sound on successful kill)
+function attemptKill(){
+  if (player.cooldown > 0) return;
+  let best = null, bestD = Infinity;
+  for (const d of dummies){
+    if (!d.alive) continue;
+    const dd = dist(player.x, player.y, d.x, d.y);
+    if (dd <= player.killRange && dd < bestD){
+      best = d; bestD = dd;
+    }
+  }
+  if (best) {
+    best.alive = false;
+    bodies.push({x: best.x, y: best.y, r: best.r, t: performance.now()});
+    player.cooldown = KILL_COOLDOWN;
+    updateHUD();
+
+    // Play the impostor kill sound and vibrate (if available)
+    try {
+      playKillSound({volume: 0.9, vibrate: true});
+      if (_killAudioCtx && _killAudioCtx.state === 'suspended') {
+        _killAudioCtx.resume().catch(()=>{ /* ignore resume errors */ });
+      }
+    } catch (e) {
+      console.warn('Kill sound error', e);
+    }
+
+    if (dummies.every(d=>!d.alive)) onWin();
+  }
+}
+
+function onWin(){
+  running = false;
+  winMessage = {text: 'You win — all dummies eliminated', time: performance.now()};
+}
+
+function step(now){
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  if (running) update(dt);
+  draw();
+  requestAnimationFrame(step);
+}
+
+function update(dt){
+  let mx = 0, my = 0;
+  if (keys['w'] || keys['arrowup']) my -= 1;
+  if (keys['s'] || keys['arrowdown']) my += 1;
+  if (keys['a'] || keys['arrowleft']) mx -= 1;
+  if (keys['d'] || keys['arrowright']) mx += 1;
+
+  if (Math.abs(fjVec.x) > 0.001 || Math.abs(fjVec.y) > 0.001) {
+    mx = fjVec.x;
+    my = fjVec.y;
+  }
+
+  const len = Math.hypot(mx,my);
+  if (len > 0.01){ mx /= len; my /= len; }
+
+  player.x += mx * player.speed * dt;
+  player.y += my * player.speed * dt;
+  player.x = clamp(player.x, 16, canvas.clientWidth - 16);
+  player.y = clamp(player.y, 16, canvas.clientHeight - 16);
+
+  if (aimPos.x !== null && aimPos.y !== null){
+    player.angle = Math.atan2(aimPos.y - player.y, aimPos.x - player.x);
+  }
+
+  if (player.cooldown > 0) player.cooldown = Math.max(0, player.cooldown - dt);
+
+  for (const d of dummies){
+    if (!d.alive) continue;
+    d.changeTimer -= dt;
+    if (d.changeTimer <= 0 || dist(d.x,d.y,d.target.x,d.target.y) < 6){
+      pickTarget(d);
+    }
+    const dx = d.target.x - d.x;
+    const dy = d.target.y - d.y;
+    const l = Math.hypot(dx,dy) || 1;
+    d.x += (dx/l) * d.speed * dt;
+    d.y += (dy/l) * d.speed * dt;
+
+    const toPlayer = dist(d.x,d.y, player.x, player.y);
+    if (toPlayer < 72 && Math.random() < 0.02){
+      const awayX = clamp(d.x + (d.x - player.x)*1.5 + rand(-30,30), 30, canvas.clientWidth-30);
+      const awayY = clamp(d.y + (d.y - player.y)*1.5 + rand(-30,30), 30, canvas.clientHeight-30);
+      d.target.x = awayX; d.target.y = awayY; d.changeTimer = rand(0.8,1.8);
+    }
+  }
+
+  updateHUD();
+
+  coolbar.style.width = player.cooldown > 0 ? clamp((1 - player.cooldown / KILL_COOLDOWN) * 100, 0, 100) + '%' : '100%';
+  cooltext.textContent = player.cooldown > 0 ? player.cooldown.toFixed(1) + 's' : 'Ready';
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.clientWidth, canvas.clientHeight);
+
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.strokeStyle = '#2b6d8f';
+  for (let x=0;x<canvas.clientWidth;x+=80){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.clientHeight); ctx.stroke();
+  }
+  for (let y=0;y<canvas.clientHeight;y+=80){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.clientWidth,y); ctx.stroke();
+  }
+  ctx.restore();
+
+  for (const b of bodies){
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.fillStyle = '#6e1f1f';
+    ctx.beginPath(); ctx.ellipse(0,0, b.r+2, b.r, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  for (const d of dummies){
+    if (!d.alive) continue;
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.fillStyle = d.color;
+    ctx.beginPath(); ctx.ellipse(0,0, d.r, d.r*1.05, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#cfeefb';
+    ctx.beginPath(); ctx.ellipse(d.r*0.1, -d.r*0.15, d.r*0.5, d.r*0.32, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(player.angle);
+  ctx.fillStyle = 'var(--accent)';
+  ctx.beginPath();
+  ctx.moveTo(16,0);
+  ctx.lineTo(-10,-11);
+  ctx.lineTo(-4,0);
+  ctx.lineTo(-10,11);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.ellipse(4, 0, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  const ringR = Math.max(player.r+8, 26);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath(); ctx.arc(player.x, player.y, ringR, 0, Math.PI*2); ctx.stroke();
+  if (player.cooldown > 0){
+    const frac = 1 - (player.cooldown / KILL_COOLDOWN);
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.beginPath(); ctx.arc(player.x, player.y, ringR, -Math.PI/2, -Math.PI/2 + frac * Math.PI*2); ctx.stroke();
+  }
+  ctx.restore();
+
+  if (aimPos.x !== null && aimPos.y !== null){
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(aimPos.x, aimPos.y); ctx.stroke();
+    ctx.restore();
+  }
+
+  if (fjBase.style.display === 'block') {
+    const baseClient = fjBasePos;
+    const c = clientToCanvas(baseClient.x, baseClient.y);
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 48, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (winMessage && (performance.now() - winMessage.time) < 4000){
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, canvas.clientHeight/2 - 40, canvas.clientWidth, 80);
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(winMessage.text, canvas.clientWidth/2, canvas.clientHeight/2 + 7);
+    ctx.restore();
+  }
+}
+
+restartBtn.addEventListener('click', ()=>{ init(); hideFloatingJoystick(); });
+document.getElementById('settings').addEventListener('click', ()=>{
+  NUM_DUMMIES = parseInt(prompt('Number of dummies (1-30):', NUM_DUMMIES)) || NUM_DUMMIES;
+  KILL_COOLDOWN = parseFloat(prompt('Kill cooldown seconds:', KILL_COOLDOWN)) || KILL_COOLDOWN;
+  init();
+});
+
+canvas.addEventListener('click', function(e){
+  const r = canvasRect;
+  if (!r) updateCanvasRect();
+  const p = clientToCanvas(e.clientX, e.clientY);
+  aimPos.x = p.x; aimPos.y = p.y;
+});
+
+// start
+init();
+requestAnimationFrame(step);
+
+// expose for debugging
+window.imposter = { player, dummies, bodies, init, attemptKill };
+</script>
+</body>
+</html>
